@@ -17,5 +17,5 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"message": "simulation job received"})
 	})
 
-	router.Run("localhost:8080")
+	router.Run("0.0.0.0:8080")
 }
