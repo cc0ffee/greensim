@@ -1,0 +1,17 @@
+{
+  "name": "baseline_equinox",
+  "location": { "lat": 52.52, "lon": 13.41 },
+  "start_date": "2025-05-26",
+  "end_date": "2025-05-28",
+  "parameters": {
+    "A_glass": 50.0,
+    "tau_glass": 0.85,
+    "U_day": 3.0,
+    "U_night": 0.6,
+    "ACH": 0.5,
+    "V": 100.0,
+    "C": 7480000.0,
+    "T_init": 15.0,
+    "setpoint": 12.0
+  }
+}
