@@ -1,8 +1,15 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+    container_name: greenhouse-backend
     ports:
       - "8080:8080"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
   
   frontend:
     build: ./frontend
@@ -10,4 +17,19 @@ services:
       - "3000:3000"
   
   worker:
-    build: ./worker
+    build:
+      context: ./worker
+    container_name: greenhouse-worker
+    command: python worker.py --redis
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  redis:
+    image: redis:7
+    container_name: greenhouse-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
