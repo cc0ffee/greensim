@@ -10,17 +10,12 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-  
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-  
+
   worker:
     build:
       context: ./worker
     container_name: greenhouse-worker
-    command: python worker.py --redis
+    command: python worker.py
     depends_on:
       - redis
     environment:
