@@ -164,7 +164,7 @@ func TestApplyDefaults(t *testing.T) {
 	applyDefaults(&params)
 
 	assert.NotNil(t, params.A_glass)
-	assert.NotNil(t, params.tau_glass)
+	assert.NotNil(t, params.TauGlass)
 	assert.NotNil(t, params.U_day)
 	assert.NotNil(t, params.U_night)
 	assert.NotNil(t, params.ACH)
@@ -175,7 +175,7 @@ func TestApplyDefaults(t *testing.T) {
 	assert.NotNil(t, params.FractionSolarAir)
 
 	assert.Equal(t, 50.0, *params.A_glass)
-	assert.Equal(t, 0.85, *params.tau_glass)
+	assert.Equal(t, 0.85, *params.TauGlass)
 	assert.Equal(t, 3.0, *params.U_day)
 	assert.Equal(t, 0.6, *params.U_night)
 	assert.Equal(t, 0.5, *params.ACH)
