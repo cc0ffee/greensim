@@ -57,10 +57,15 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Lint Go code
+      - name: Download Go dependencies
+        working-directory: backend
         run: |
-          cd backend
-          go vet ./...
+          go mod download
+          go mod tidy
+
+      - name: Lint Go code
+        working-directory: backend
+        run: go vet ./...
 
       - name: Run Go tests
         working-directory: backend
