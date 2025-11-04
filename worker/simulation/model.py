@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from typing import Optional
 
 # --- Physical constants ---
 RHO_AIR = 1.225        # kg/m3
@@ -8,9 +9,86 @@ SIGMA = 5.670374419e-8 # Stefan-Boltzmann W/m2/K4
 LV = 2.45e6            # latent heat J/kg (approx)
 
 def _sky_temperature_kelvin(T_out_C, cloud_factor=0.5):
-    """Approximate sky temperature in Kelvin (slightly more realistic)."""
-    T_sky = T_out_C - 6.0 * (1.0 - cloud_factor)
+    """
+    Approximate sky temperature in Kelvin.
+    More realistic model: clear sky is much colder than ambient.
+    Cloudy sky is closer to ambient temperature.
+    """
+    # Clear sky: ~10-15°C below ambient
+    # Cloudy sky: ~2-5°C below ambient
+    # This is more realistic for longwave radiation calculations
+    clear_sky_offset = 12.0  # Clear sky temperature drop (°C)
+    cloudy_sky_offset = 3.0  # Cloudy sky temperature drop (°C)
+    T_sky = T_out_C - (clear_sky_offset - (clear_sky_offset - cloudy_sky_offset) * cloud_factor)
     return T_sky + 273.15
+
+def calculate_heat_to_threshold(T_air: float, T_mass: float, T_soil: float, 
+                                 setpoint: Optional[float], C_air: float, C_mass: float, 
+                                 C_soil: float, Tout: float, params: dict) -> float:
+    """
+    Calculate the total heat energy (Joules) needed to heat the greenhouse 
+    from current temperatures to the threshold setpoint temperature.
+    
+    This accounts for:
+    - Energy to heat air to setpoint
+    - Energy to heat thermal mass to setpoint
+    - Energy to heat soil to setpoint
+    - Estimated ongoing heat losses during heating process
+    
+    Returns heat energy in Joules. Returns 0 if already at or above threshold.
+    """
+    if setpoint is None or T_air >= setpoint:
+        return 0.0
+    
+    # Energy needed to raise air temperature
+    Q_air = C_air * max(0.0, setpoint - T_air)
+    
+    # Energy needed to raise thermal mass temperature
+    Q_mass = C_mass * max(0.0, setpoint - T_mass)
+    
+    # Energy needed to raise soil temperature
+    Q_soil = C_soil * max(0.0, setpoint - T_soil)
+    
+    # Estimate ongoing heat losses during heating
+    # Use average temperature during heating: (T_air + setpoint) / 2
+    T_avg = (T_air + setpoint) / 2.0
+    
+    # Get parameters for heat loss calculation
+    A_glass = params.get("A_glass", 50.0)
+    U_day = params.get("U_day", 2.0)
+    U_night = params.get("U_night", 0.25)
+    hour = params.get("current_hour", 12)
+    U_env = U_day if 6 <= hour <= 18 else U_night
+    
+    V = params.get("V", 100.0)
+    ACH = params.get("ACH", 0.5)
+    
+    # Heat loss through envelope (estimate during heating)
+    Q_loss_env = U_env * A_glass * (T_avg - Tout)
+    
+    # Ventilation heat loss
+    m_dot = RHO_AIR * V * (ACH / 3600.0)
+    Q_vent = m_dot * CP_AIR * (T_avg - Tout)
+    
+    # Estimate heating time (simplified) - assume average heating rate
+    # This is a rough estimate - actual heating time depends on heater power
+    heater_max_w = params.get("heater_max_w", 5000.0)
+    if heater_max_w > 0:
+        # Estimate time to heat (simplified - assumes constant losses)
+        total_heat_needed = Q_air + Q_mass + Q_soil
+        net_heating_power = heater_max_w - max(0, Q_loss_env + Q_vent)
+        if net_heating_power > 0:
+            estimated_time_s = total_heat_needed / net_heating_power
+            # Heat losses during estimated heating time
+            Q_losses_during_heating = (Q_loss_env + Q_vent) * estimated_time_s
+        else:
+            Q_losses_during_heating = (Q_loss_env + Q_vent) * 3600.0  # Assume 1 hour if can't heat
+    else:
+        Q_losses_during_heating = 0.0
+    
+    total_heat = Q_air + Q_mass + Q_soil + Q_losses_during_heating
+    
+    return max(0.0, total_heat)
 
 def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, substeps=60, T_bounds=(0, 50)):
     """
@@ -67,8 +145,20 @@ def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, subst
         RH = float(row.get("RH", 0.5) or 0.5)
         hour = int(row["datetime"].hour) if "datetime" in row else 12
 
-        # --- Determine insulation ---
-        U_env = U_day if 6 <= hour <= 18 else U_night
+        # --- Determine insulation (gradual transition based on solar radiation) ---
+        # More realistic: U-value depends on solar radiation, not just time
+        # High solar = daytime behavior (ventilation open, more heat loss)
+        # Low solar = nighttime behavior (sealed, less heat loss)
+        if G > 100:  # Strong solar radiation (daytime)
+            U_env = U_day
+        elif G < 10:  # Very low solar (nighttime)
+            U_env = U_night
+        else:
+            # Gradual transition zone (dawn/dusk)
+            # Linear interpolation between U_night and U_day
+            solar_factor = min(1.0, max(0.0, (G - 10) / 90))
+            U_env = U_night + (U_day - U_night) * solar_factor
+        
         dt_step = float(dt) / max(1, int(substeps))
 
         # --- Substeps for numerical stability ---
@@ -88,7 +178,10 @@ def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, subst
             T_air_K = np.clip(T_air + 273.15, 0, 1000)
             T_sky_K = np.clip(_sky_temperature_kelvin(Tout, cloud_factor), 0, 1000)
             emissivity = params.get("emissivity", 0.9)
-            Q_lw = emissivity * SIGMA * A_glass * (T_air_K**4 - T_sky_K**4)
+            # Scale down longwave radiation slightly to prevent it from dominating
+            # Real greenhouses have some reflection and the effective area is less
+            lw_scale = params.get("lw_radiation_scale", 0.7)  # Scale factor for realistic magnitude
+            Q_lw = lw_scale * emissivity * SIGMA * A_glass * (T_air_K**4 - T_sky_K**4)
 
             # --- Heat exchange with mass and soil ---
             h_am = params.get("h_am", 3.0)
@@ -122,7 +215,10 @@ def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, subst
             # --- Heater control (gradual) ---
             Q_heater = 0.0
             if setpoint is not None and T_air < setpoint:
-                power_needed = (setpoint - T_air) * (C_air + C_mass) / dt_step
+                # Gradual heating: aim to reach setpoint over ~2-3 timesteps (not instant)
+                # This prevents aggressive oscillations and makes behavior more realistic
+                heating_rate_factor = params.get("heating_rate_factor", 0.4)  # 0.4 = heat over ~2.5 hours
+                power_needed = (setpoint - T_air) * (C_air + C_mass) * heating_rate_factor / dt_step
                 Q_heater = np.clip(power_needed, 0, heater_max_w)
                 T_air += (Q_heater * dt_step) / (C_air + C_mass)
 
@@ -131,6 +227,17 @@ def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, subst
             T_mass = np.clip(T_mass, *T_bounds)
             T_soil = np.clip(T_soil, *T_bounds)
 
+        # --- Calculate heat needed to reach threshold (if setpoint is defined) ---
+        Q_to_threshold = 0.0
+        if setpoint is not None and T_air < setpoint:
+            # Create params dict for heat calculation (includes current hour)
+            calc_params = params.copy()
+            calc_params["current_hour"] = hour
+            Q_to_threshold = calculate_heat_to_threshold(
+                T_air, T_mass, T_soil, setpoint, 
+                C_air, C_mass, C_soil, Tout, calc_params
+            )
+        
         # --- Store results for this timestep ---
         out_rows.append({
             "datetime": row["datetime"],
@@ -140,6 +247,7 @@ def simulate_greenhouse(weather_df: pd.DataFrame, params: dict, dt=3600.0, subst
             "T_soil": T_soil,
             "Q_heater": Q_heater,
             "Q_latent": Q_lat,
+            "Q_to_threshold": Q_to_threshold,  # Heat needed to reach threshold (J)
         })
 
     return pd.DataFrame(out_rows)

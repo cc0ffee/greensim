@@ -1,2 +1,2 @@
-# Expose worker.py functions at package level
-from .worker import process_job
+# Worker package initialization
+# Don't import worker.py here to avoid circular import issues in tests

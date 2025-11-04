@@ -63,6 +63,8 @@ def process_job(job: dict, rdb):
             "Tin_max": float(result_df["Tin"].max()) if "Tin" in result_df.columns else None,
             "Tin_mean": float(result_df["Tin"].mean()) if "Tin" in result_df.columns else None,
             "Heater_total_J": float(result_df["Q_heater"].sum()) if "Q_heater" in result_df.columns else None,
+            "Heat_to_threshold_max_J": float(result_df["Q_to_threshold"].max()) if "Q_to_threshold" in result_df.columns else None,
+            "Heat_to_threshold_mean_J": float(result_df["Q_to_threshold"].mean()) if "Q_to_threshold" in result_df.columns else None,
         }
 
         result_json = {

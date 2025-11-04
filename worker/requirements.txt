@@ -3,3 +3,6 @@ numpy
 requests
 redis
 pytest
+pytest-cov
+pytest-mock
+coverage
