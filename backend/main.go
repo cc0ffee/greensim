@@ -54,7 +54,7 @@ type SimulationParams struct {
 	U_day            *float64 `json:"U_day,omitempty"`
 	U_night          *float64 `json:"U_night,omitempty"`
 	A_glass          *float64 `json:"A_glass,omitempty"`
-	tau_glass        *float64 `json:"tau_glass,omitempty"`
+	TauGlass         *float64 `json:"tau_glass,omitempty"`
 	ACH              *float64 `json:"ACH,omitempty"`
 	Volume           *float64 `json:"V,omitempty"` // greenhouse volume (m3)
 	C                *float64 `json:"C,omitempty"` // alternate direct C (J/K)
@@ -157,9 +157,9 @@ func applyDefaults(p *SimulationParams) {
 		def := 50.0
 		p.A_glass = &def
 	}
-	if p.tau_glass == nil {
+	if p.TauGlass == nil {
 		def := 0.85
-		p.tau_glass = &def
+		p.TauGlass = &def
 	}
 	if p.U_day == nil {
 		def := 3.0
