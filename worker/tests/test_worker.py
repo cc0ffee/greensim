@@ -124,10 +124,16 @@ def test_worker_job_error_handling(rdb):
     meta = {"status": "queued", "created_at": job["created_at"]}
     rdb.set(f"job_meta:{job['job_id']}", json.dumps(meta))
 
-    # Mock get_weather to raise an exception
-    with patch('simulation.weather.get_weather', side_effect=Exception("Test error: Weather API failed")):
+    # Mock get_weather to raise an exception - patch it in the worker_module namespace
+    # Since get_weather is imported at module level, we need to patch it where it's used
+    original_get_weather = worker_module.get_weather
+    worker_module.get_weather = MagicMock(side_effect=Exception("Test error: Weather API failed"))
+    try:
         # Process job (should handle error gracefully)
         process_job(job, rdb)
+    finally:
+        # Restore original
+        worker_module.get_weather = original_get_weather
 
     # Check job status is error
     meta_after = json.loads(rdb.get(f"job_meta:{job['job_id']}"))
