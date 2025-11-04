@@ -13,6 +13,9 @@
 coverage.*
 *.coverprofile
 profile.cov
+htmlcov/
+.coverage
+.pytest_cache/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

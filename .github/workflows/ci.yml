@@ -30,18 +30,48 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r worker/requirements.txt || pip install pandas numpy requests pytest redis
+          pip install -r worker/requirements.txt || pip install pandas numpy requests pytest redis pytest-cov pytest-mock coverage
 
-      - name: Run Python tests
-        run: pytest -v worker/tests/
+      - name: Run Python tests with coverage
+        run: |
+          cd worker
+          PYTHONPATH=. pytest tests/ -v --cov=simulation --cov=worker --cov-report=term-missing --cov-report=xml --cov-report=html
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./worker/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: worker/htmlcov/
+          retention-days: 30
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.21"
 
       - name: Lint Go code
         run: go vet ./backend/...
+
+      - name: Run Go tests
+        run: |
+          cd backend
+          go test -v -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload Go coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./backend/coverage.out
+          flags: gotests
+          name: codecov-go
+          fail_ci_if_error: false
 
       - name: Build backend binary
         run: cd backend && go build -o main .

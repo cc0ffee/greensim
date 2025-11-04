@@ -128,132 +128,16 @@ func main() {
 	})
 
 	// Submit a job
-	router.POST("/simulate", func(c *gin.Context) {
-		var params SimulationParams
-		if err := c.BindJSON(&params); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
-			return
-		}
-
-		// basic validation & defaults
-		applyDefaults(&params)
-
-		// create job id and payload
-		jobID := uuid.NewString()
-		now := time.Now().UTC()
-
-		payload := JobPayload{
-			JobID:     jobID,
-			CreatedAt: now,
-			Params:    params,
-		}
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal job payload"})
-			return
-		}
-
-		// push payload into list (queue)
-		ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
-		defer cancel()
-		if err := rdb.RPush(ctx, RedisJobsList, payloadBytes).Err(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue job: " + err.Error()})
-			return
-		}
-
-		// create job meta and store
-		meta := JobMeta{
-			JobID:     jobID,
-			Status:    StatusQueued,
-			CreatedAt: now,
-			UpdatedAt: now,
-			Params:    params,
-			ResultKey: RedisResultsPrefix + jobID,
-		}
-		metaBytes, _ := json.Marshal(meta)
-		if err := rdb.Set(ctx, RedisJobMetaPrefix+jobID, metaBytes, DefaultResultTTL).Err(); err != nil {
-			// log but do not fail enqueue (best-effort)
-			log.Printf("warning: failed to set job meta: %v", err)
-		}
-
-		// push job id into recent list (trim)
-		if err := rdb.LPush(ctx, RedisRecentJobsList, jobID).Err(); err == nil {
-			rdb.LTrim(ctx, RedisRecentJobsList, 0, RecentJobsMaxRetain-1)
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id": jobID,
-			"status": StatusQueued,
-		})
-	})
+	router.POST("/simulate", submitJobHandler)
 
 	// Get results for a job
-	router.GET("/results/:job_id", func(c *gin.Context) {
-		jobID := c.Param("job_id")
-		ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
-		defer cancel()
-
-		res, err := rdb.Get(ctx, RedisResultsPrefix+jobID).Result()
-		if err == redis.Nil {
-			// not ready
-			// return status from job_meta if exists
-			metaBytes, err2 := rdb.Get(ctx, RedisJobMetaPrefix+jobID).Result()
-			if err2 == nil {
-				var meta JobMeta
-				_ = json.Unmarshal([]byte(metaBytes), &meta)
-				c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": meta.Status})
-				return
-			}
-			c.JSON(http.StatusNotFound, gin.H{"error": "no result or job not found"})
-			return
-		} else if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
-			return
-		}
-
-		// return JSON result as-is (assuming worker stores JSON string)
-		var parsed interface{}
-		if err := json.Unmarshal([]byte(res), &parsed); err == nil {
-			c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": StatusDone, "result": parsed})
-			return
-		}
-
-		// fallback raw
-		c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": StatusDone, "result": res})
-	})
+	router.GET("/results/:job_id", getResultsHandler)
 
 	// Get recent results (list of recent job ids)
-	router.GET("/results", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
-		defer cancel()
-		ids, err := rdb.LRange(ctx, RedisRecentJobsList, 0, 49).Result()
-		if err != nil && err != redis.Nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"recent_job_ids": ids})
-	})
+	router.GET("/results", getRecentJobsHandler)
 
 	// Get job metadata
-	router.GET("/jobs/:job_id", func(c *gin.Context) {
-		jobID := c.Param("job_id")
-		ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
-		defer cancel()
-		metaStr, err := rdb.Get(ctx, RedisJobMetaPrefix+jobID).Result()
-		if err == redis.Nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
-			return
-		} else if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
-			return
-		}
-		var meta JobMeta
-		if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse job meta"})
-			return
-		}
-		c.JSON(http.StatusOK, meta)
-	})
+	router.GET("/jobs/:job_id", getJobMetaHandler)
 
 	// Start server
 	addr := ":8080"
@@ -319,4 +203,129 @@ func applyDefaults(p *SimulationParams) {
 		p.FractionSolarAir = &def
 	}
 	// lat/lon left nil if not provided
+}
+
+// Handler functions for better testability
+func submitJobHandler(c *gin.Context) {
+	var params SimulationParams
+	if err := c.BindJSON(&params); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	// basic validation & defaults
+	applyDefaults(&params)
+
+	// create job id and payload
+	jobID := uuid.NewString()
+	now := time.Now().UTC()
+
+	payload := JobPayload{
+		JobID:     jobID,
+		CreatedAt: now,
+		Params:    params,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal job payload"})
+		return
+	}
+
+	// push payload into list (queue)
+	ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
+	defer cancel()
+	if err := rdb.RPush(ctx, RedisJobsList, payloadBytes).Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue job: " + err.Error()})
+		return
+	}
+
+	// create job meta and store
+	meta := JobMeta{
+		JobID:     jobID,
+		Status:    StatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Params:    params,
+		ResultKey: RedisResultsPrefix + jobID,
+	}
+	metaBytes, _ := json.Marshal(meta)
+	if err := rdb.Set(ctx, RedisJobMetaPrefix+jobID, metaBytes, DefaultResultTTL).Err(); err != nil {
+		// log but do not fail enqueue (best-effort)
+		log.Printf("warning: failed to set job meta: %v", err)
+	}
+
+	// push job id into recent list (trim)
+	if err := rdb.LPush(ctx, RedisRecentJobsList, jobID).Err(); err == nil {
+		rdb.LTrim(ctx, RedisRecentJobsList, 0, RecentJobsMaxRetain-1)
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id": jobID,
+		"status": StatusQueued,
+	})
+}
+
+func getResultsHandler(c *gin.Context) {
+	jobID := c.Param("job_id")
+	ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
+	defer cancel()
+
+	res, err := rdb.Get(ctx, RedisResultsPrefix+jobID).Result()
+	if err == redis.Nil {
+		// not ready
+		// return status from job_meta if exists
+		metaBytes, err2 := rdb.Get(ctx, RedisJobMetaPrefix+jobID).Result()
+		if err2 == nil {
+			var meta JobMeta
+			_ = json.Unmarshal([]byte(metaBytes), &meta)
+			c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": meta.Status})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "no result or job not found"})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
+		return
+	}
+
+	// return JSON result as-is (assuming worker stores JSON string)
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(res), &parsed); err == nil {
+		c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": StatusDone, "result": parsed})
+		return
+	}
+
+	// fallback raw
+	c.JSON(http.StatusOK, gin.H{"job_id": jobID, "status": StatusDone, "result": res})
+}
+
+func getRecentJobsHandler(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
+	defer cancel()
+	ids, err := rdb.LRange(ctx, RedisRecentJobsList, 0, 49).Result()
+	if err != nil && err != redis.Nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"recent_job_ids": ids})
+}
+
+func getJobMetaHandler(c *gin.Context) {
+	jobID := c.Param("job_id")
+	ctx, cancel := context.WithTimeout(context.Background(), RedisOpTimeout)
+	defer cancel()
+	metaStr, err := rdb.Get(ctx, RedisJobMetaPrefix+jobID).Result()
+	if err == redis.Nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "redis error: " + err.Error()})
+		return
+	}
+	var meta JobMeta
+	if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse job meta"})
+		return
+	}
+	c.JSON(http.StatusOK, meta)
 }
