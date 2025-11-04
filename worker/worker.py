@@ -58,6 +58,13 @@ def process_job(job: dict, rdb):
 
         result_df = simulate_greenhouse(weather_df, params)
 
+        # Debug: Check if Tout is in the dataframe
+        log(f"Result dataframe columns: {list(result_df.columns)}")
+        if "Tout" in result_df.columns:
+            log(f"Tout sample values: {result_df['Tout'].head(5).tolist()}")
+        else:
+            log("WARNING: Tout column not found in result dataframe!")
+
         summary = {
             "Tin_min": float(result_df["Tin"].min()) if "Tin" in result_df.columns else None,
             "Tin_max": float(result_df["Tin"].max()) if "Tin" in result_df.columns else None,
@@ -67,15 +74,24 @@ def process_job(job: dict, rdb):
             "Heat_to_threshold_mean_J": float(result_df["Q_to_threshold"].mean()) if "Q_to_threshold" in result_df.columns else None,
         }
 
+        # Convert dataframe to list of dicts, ensuring Tout is preserved
+        data_records = []
+        for row in result_df.to_dict(orient="records"):
+            # Ensure datetime is in ISO format
+            row_dict = row.copy()
+            if isinstance(row_dict.get("datetime"), pd.Timestamp):
+                row_dict["datetime"] = row_dict["datetime"].isoformat()
+            # Explicitly ensure Tout is included
+            if "Tout" not in row_dict:
+                log(f"WARNING: Tout missing in row: {row_dict}")
+            data_records.append(row_dict)
+
         result_json = {
             "job_id": job_id,
             "created_at": created_at,
             "params": params,
             "summary": summary,
-            "data": [
-                {**row, "datetime": row["datetime"].isoformat() if isinstance(row["datetime"], pd.Timestamp) else row["datetime"]}
-                for row in result_df.to_dict(orient="records")
-            ],
+            "data": data_records,
         }
 
         rdb.set(f"{RESULT_PREFIX}{job_id}", json.dumps(result_json), ex=RESULT_TTL)
