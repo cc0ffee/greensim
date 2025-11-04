@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r worker/requirements.txt || pip install pandas numpy requests pytest redis pytest-cov pytest-mock coverage
+          pip install -r worker/requirements.txt || pip install pandas numpy requests redis matplotlib pytest pytest-cov pytest-mock coverage
 
       - name: Run Python tests with coverage
         run: |
