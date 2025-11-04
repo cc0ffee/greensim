@@ -109,10 +109,14 @@ def test_worker_job_success(rdb):
 @pytest.mark.integration
 def test_worker_job_error_handling(rdb):
     """Test job processing error handling."""
+    # Use a job that will cause an error by mocking get_weather to raise an exception
     job = {
         "job_id": "test_error",
         "params": {
-            "invalid": "params"  # Will cause error
+            "lat": 41.8781,
+            "lon": -87.6298,
+            "start_date": "2025-11-01",
+            "end_date": "2025-11-02"
         },
         "created_at": "2025-10-05T00:00:00"
     }
@@ -120,8 +124,10 @@ def test_worker_job_error_handling(rdb):
     meta = {"status": "queued", "created_at": job["created_at"]}
     rdb.set(f"job_meta:{job['job_id']}", json.dumps(meta))
 
-    # Process job (should handle error gracefully)
-    process_job(job, rdb)
+    # Mock get_weather to raise an exception
+    with patch('simulation.weather.get_weather', side_effect=Exception("Test error: Weather API failed")):
+        # Process job (should handle error gracefully)
+        process_job(job, rdb)
 
     # Check job status is error
     meta_after = json.loads(rdb.get(f"job_meta:{job['job_id']}"))
