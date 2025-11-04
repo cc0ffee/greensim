@@ -3,11 +3,11 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod tidy
+RUN go mod download && go mod tidy
 
 COPY . .
 
-RUN go build -o main .
+RUN go mod tidy && go build -o main .
 
 FROM alpine:edge
 
